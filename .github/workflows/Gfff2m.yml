@@ -1,0 +1,85 @@
+name: gfffff2m
+
+on:
+  workflow_dispatch:
+    inputs:
+      gofile_url:
+        description: 'GoFile URL to download'
+        required: true
+        default: 'https://gofile.io/d/xbD9Joj8'
+      mf_folder:
+        description: 'MediaFire destination folder'
+        required: true
+        default: '1/101126'
+      mf_email:
+        description: 'MediaFire email'
+        required: true
+        default: 'tenis_gmmanup_up8@moakt.cc'
+      upload_file:
+        description: 'File name to upload (e.g. mymatch.ts)'
+        required: true
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # ── 1. Install exact yt-dlp version ────────────────────────────────────
+      - name: Install yt-dlp
+        run: pip install --force-reinstall "yt-dlp[default]==2026.06.09"
+
+      # ── 2. Swap in the custom GoFile extractor ──────────────────────────────
+      - name: Replace GoFile extractor
+        run: |
+          EXTRACTOR_DIR=$(python -c "
+          import yt_dlp, os
+          print(os.path.join(os.path.dirname(yt_dlp.__file__), 'extractor'))
+          ")
+          echo "→ Patching: $EXTRACTOR_DIR/gofile.py"
+          rm -f "$EXTRACTOR_DIR/gofile.py"
+          cp gofile.py "$EXTRACTOR_DIR/gofile.py"
+
+      # ── 3. Download from GoFile ─────────────────────────────────────────────
+      - name: Download from GoFile
+        run: |
+          yt-dlp -o "%(title)s.%(ext)s" "${{ inputs.gofile_url }}"
+          echo "--- Files after download ---"
+          ls -lh
+
+      # ── 4. Set up MediaFire uploader ────────────────────────────────────────
+      - name: Clone mfcmd.py uploader
+        run: |
+          git clone https://github.com/JayBrown/mfcmd.py---MediaFire-uploader
+          cp mfcmd.py---MediaFire-uploader/mfcmd.py .
+
+      # ── 5. Install mediafire & patch subsetio ───────────────────────────────
+      - name: Install mediafire & patch subsetio
+        run: |
+          pip install mediafire
+          python .github/scripts/patch_subsetio.py
+
+      # ── 6. Upload chosen file to MediaFire ──────────────────────────────────
+      - name: Upload file to MediaFire
+        env:
+          MF_PASSWORD: ${{ secrets.MEDIAFIRE_PASSWORD }}
+        run: |
+          if [[ ! -f "${{ inputs.upload_file }}" ]]; then
+            echo "ERROR: '${{ inputs.upload_file }}' not found"
+            ls -lh
+            exit 1
+          fi
+          echo "▶ Uploading: ${{ inputs.upload_file }}"
+          python mfcmd.py \
+            -e "${{ inputs.mf_email }}" \
+            -p "$MF_PASSWORD" \
+            -u "${{ inputs.mf_folder }}" \
+            -f "${{ inputs.upload_file }}"
