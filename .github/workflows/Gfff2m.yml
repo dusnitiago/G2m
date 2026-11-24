@@ -14,7 +14,7 @@ on:
       mf_email:
         description: 'MediaFire email'
         required: true
-        default: 'tenis_gmmanup_up8@moakt.cc'
+        default: ' '
       upload_file:
         description: 'File name to upload (e.g. mymatch.ts)'
         required: true
