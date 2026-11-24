@@ -14,7 +14,7 @@ on:
       mf_email:
         description: 'MediaFire email'
         required: true
-        default: ''
+        default: 'tenis_gmmanup_up8@moakt.cc'
       input_file:
         description: 'Downloaded file to upload or trim (e.g. match.ts)'
         required: true
@@ -72,7 +72,11 @@ jobs:
           echo "--- Files after download ---"
           ls -lh
 
-      # ── 4. Cut with FFmpeg (skipped if skip_trim is checked) ────────────────
+      # ── 4. Install ffmpeg ───────────────────────────────────────────────────
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      # ── 5. Cut with FFmpeg (skipped if skip_trim is checked) ────────────────
       - name: Cut file with FFmpeg
         if: ${{ inputs.skip_trim == false }}
         run: |
@@ -101,19 +105,19 @@ jobs:
           echo "--- Output file ---"
           ls -lh "${{ inputs.output_file }}"
 
-      # ── 5. Set up MediaFire uploader ────────────────────────────────────────
+      # ── 6. Set up MediaFire uploader ────────────────────────────────────────
       - name: Clone mfcmd.py uploader
         run: |
           git clone https://github.com/JayBrown/mfcmd.py---MediaFire-uploader
           cp mfcmd.py---MediaFire-uploader/mfcmd.py .
 
-      # ── 6. Install mediafire & patch subsetio ───────────────────────────────
+      # ── 7. Install mediafire & patch subsetio ───────────────────────────────
       - name: Install mediafire & patch subsetio
         run: |
           pip install mediafire
           python .github/scripts/patch_subsetio.py
 
-      # ── 7. Upload to MediaFire ───────────────────────────────────────────────
+      # ── 8. Upload to MediaFire ───────────────────────────────────────────────
       - name: Upload file to MediaFire
         env:
           MF_PASSWORD: ${{ secrets.MEDIAFIRE_PASSWORD }}
