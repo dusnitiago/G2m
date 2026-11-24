@@ -1,0 +1,122 @@
+import hashlib
+import time
+
+from .common import InfoExtractor
+from ..utils import ExtractorError, try_get
+
+
+class GofileIE(InfoExtractor):
+    _VALID_URL = r'https?://(?:www\.)?gofile\.io/d/(?P<id>[^/]+)'
+    _TESTS = [{
+        'url': 'https://gofile.io/d/AMZyDw',
+        'info_dict': {
+            'id': 'AMZyDw',
+        },
+        'playlist_mincount': 2,
+        'playlist': [{
+            'info_dict': {
+                'id': 'de571ac1-5edc-42e2-8ec2-bdac83ad4a31',
+                'filesize': 928116,
+                'ext': 'mp4',
+                'title': 'nuuh',
+                'release_timestamp': 1638338704,
+                'release_date': '20211201',
+            },
+        }],
+    }, {
+        'url': 'https://gofile.io/d/TMjXd9',
+        'info_dict': {
+            'id': 'TMjXd9',
+        },
+        'playlist_mincount': 1,
+    }, {
+        'url': 'https://gofile.io/d/gqOtRf',
+        'info_dict': {
+            'id': 'gqOtRf',
+        },
+        'playlist_mincount': 1,
+        'params': {
+            'videopassword': 'password',
+        },
+    }]
+    _TOKEN = None
+    _SALT = '12af056dacea0b'  # Source https://gofile.io/dist/js/wt.obf.js
+    _LOCALE = 'en-GB'
+
+    def _real_initialize(self):
+        token = self._get_cookies('https://gofile.io/').get('accountToken')
+        if token:
+            self._TOKEN = token.value
+            return
+
+        account_data = self._download_json(
+            'https://api.gofile.io/accounts', None,
+            'Getting a new guest account', data=b'{}')
+        self._TOKEN = account_data['data']['token']
+        self._set_cookie('.gofile.io', 'accountToken', self._TOKEN)
+
+    def _entries(self, file_id):
+        query_params = {}
+        if password := self.get_param('videopassword'):
+            query_params['password'] = hashlib.sha256(password.encode()).hexdigest()
+
+        user_agent = self.get_param('http_headers')['User-Agent']
+        # Source https://gofile.io/dist/js/wt.obf.js
+        token_data = (
+            f'{user_agent}::{self._LOCALE}::{self._TOKEN}'
+            f'::{int(time.time() / 14400)}::{self._SALT}'
+        )
+        request_headers = {
+            'Authorization': f'Bearer {self._TOKEN}',
+            'X-Website-Token': hashlib.sha256(token_data.encode()).hexdigest(),
+            'User-Agent': user_agent,
+            'X-BL': self._LOCALE,
+        }
+
+        files = self._download_json(
+            f'https://api.gofile.io/contents/{file_id}', file_id,
+            'Getting filelist', query=query_params, headers=request_headers)
+
+        status = files['status']
+        if status == 'error-passwordRequired':
+            raise ExtractorError(
+                'This content is protected by a password, use the --video-password option',
+                expected=True)
+        elif status != 'ok':
+            raise ExtractorError(
+                f'{self.IE_NAME} said: status {status}', expected=True)
+
+        found_files = False
+        for file in (try_get(files, lambda x: x['data']['children'], dict) or {}).values():
+            # ── accept every file type ──────────────────────────────────────
+            file_url = file.get('link')
+            if not file_url:
+                continue
+
+            filename = file.get('name') or ''
+            # Derive extension from the original filename (e.g. photo.webp → webp)
+            name_parts = filename.rsplit('.', 1)
+            title = name_parts[0] if len(name_parts) > 1 else filename
+            ext   = name_parts[1].lower() if len(name_parts) > 1 else None
+
+            found_files = True
+            entry = {
+                'id':                file['id'],
+                'title':             title,
+                'url':               file_url,
+                'filesize':          file.get('size'),
+                'release_timestamp': file.get('createTime'),
+                # Pass the auth header so yt-dlp can actually fetch the file
+                'http_headers':      request_headers,
+            }
+            if ext:
+                entry['ext'] = ext
+
+            yield entry
+
+        if not found_files:
+            raise ExtractorError('No files found at provided URL.', expected=True)
+
+    def _real_extract(self, url):
+        file_id = self._match_id(url)
+        return self.playlist_result(self._entries(file_id), playlist_id=file_id)
