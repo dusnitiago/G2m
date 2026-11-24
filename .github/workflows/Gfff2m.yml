@@ -1,4 +1,4 @@
-name: gfffff2m
+name: gffffff2m
 
 on:
   workflow_dispatch:
@@ -15,9 +15,26 @@ on:
         description: 'MediaFire email'
         required: true
         default: ''
-      upload_file:
-        description: 'File name to upload (e.g. mymatch.ts)'
+      input_file:
+        description: 'Downloaded file to upload or trim (e.g. match.ts)'
         required: true
+      skip_trim:
+        description: 'Skip FFmpeg trim and upload file as-is'
+        required: false
+        type: boolean
+        default: false
+      cut_start:
+        description: 'FFmpeg -ss start time (e.g. 00:00:00) — ignored if skip_trim is checked'
+        required: false
+        default: '00:00:00'
+      cut_end:
+        description: 'FFmpeg -to end time (e.g. 02:00:00) — leave empty to cut to end of file'
+        required: false
+        default: ''
+      output_file:
+        description: 'Output filename after cut (e.g. match_part1.ts) — ignored if skip_trim is checked'
+        required: false
+        default: ''
 
 jobs:
   transfer:
@@ -55,31 +72,67 @@ jobs:
           echo "--- Files after download ---"
           ls -lh
 
-      # ── 4. Set up MediaFire uploader ────────────────────────────────────────
+      # ── 4. Cut with FFmpeg (skipped if skip_trim is checked) ────────────────
+      - name: Cut file with FFmpeg
+        if: ${{ inputs.skip_trim == false }}
+        run: |
+          if [[ ! -f "${{ inputs.input_file }}" ]]; then
+            echo "ERROR: '${{ inputs.input_file }}' not found – available files:"
+            ls -lh
+            exit 1
+          fi
+
+          CUT_END="${{ inputs.cut_end }}"
+          if [[ -n "$CUT_END" ]]; then
+            echo "▶ Cutting: ${{ inputs.cut_start }} → $CUT_END"
+            ffmpeg -i "${{ inputs.input_file }}" \
+              -ss "${{ inputs.cut_start }}" \
+              -to "$CUT_END" \
+              -map 0 -c copy \
+              "${{ inputs.output_file }}"
+          else
+            echo "▶ Cutting: ${{ inputs.cut_start }} → end of file"
+            ffmpeg -i "${{ inputs.input_file }}" \
+              -ss "${{ inputs.cut_start }}" \
+              -map 0 -c copy \
+              "${{ inputs.output_file }}"
+          fi
+
+          echo "--- Output file ---"
+          ls -lh "${{ inputs.output_file }}"
+
+      # ── 5. Set up MediaFire uploader ────────────────────────────────────────
       - name: Clone mfcmd.py uploader
         run: |
           git clone https://github.com/JayBrown/mfcmd.py---MediaFire-uploader
           cp mfcmd.py---MediaFire-uploader/mfcmd.py .
 
-      # ── 5. Install mediafire & patch subsetio ───────────────────────────────
+      # ── 6. Install mediafire & patch subsetio ───────────────────────────────
       - name: Install mediafire & patch subsetio
         run: |
           pip install mediafire
           python .github/scripts/patch_subsetio.py
 
-      # ── 6. Upload chosen file to MediaFire ──────────────────────────────────
+      # ── 7. Upload to MediaFire ───────────────────────────────────────────────
       - name: Upload file to MediaFire
         env:
           MF_PASSWORD: ${{ secrets.MEDIAFIRE_PASSWORD }}
         run: |
-          if [[ ! -f "${{ inputs.upload_file }}" ]]; then
-            echo "ERROR: '${{ inputs.upload_file }}' not found"
+          if [[ "${{ inputs.skip_trim }}" == "true" ]]; then
+            UPLOAD_FILE="${{ inputs.input_file }}"
+          else
+            UPLOAD_FILE="${{ inputs.output_file }}"
+          fi
+
+          if [[ ! -f "$UPLOAD_FILE" ]]; then
+            echo "ERROR: '$UPLOAD_FILE' not found"
             ls -lh
             exit 1
           fi
-          echo "▶ Uploading: ${{ inputs.upload_file }}"
+
+          echo "▶ Uploading: $UPLOAD_FILE"
           python mfcmd.py \
             -e "${{ inputs.mf_email }}" \
             -p "$MF_PASSWORD" \
             -u "${{ inputs.mf_folder }}" \
-            -f "${{ inputs.upload_file }}"
+            -f "$UPLOAD_FILE"
